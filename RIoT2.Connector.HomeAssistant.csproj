@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <IncludeSymbols>False</IncludeSymbols>
+    <IsPublishable>true</IsPublishable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The connector SDK (design 7.3), with IRiot2CommandClient and template observers since 2.1.0. -->
+    <PackageReference Include="RIoT2.Connector.Sdk" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Its tests are in RIoT2.Tests (HomeAssistantTests). -->
+    <InternalsVisibleTo Include="RIoT2.Tests" />
+  </ItemGroup>
+
+</Project>

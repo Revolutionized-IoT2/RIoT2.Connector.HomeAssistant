@@ -128,12 +128,13 @@ namespace RIoT2.Connector.HomeAssistant.Services
         /// <summary>Publishes every entity again, and deletes the stale ones; nothing before the templates are loaded.</summary>
         public async Task PublishAsync(CancellationToken cancellationToken)
         {
-            var templates = _templates;
-            if (templates == null || !_mqtt.IsConnected)
-                return;
             await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
+                // Read inside the gate, so an older template set never runs after a newer one and deletes its configs.
+                var templates = _templates;
+                if (templates == null || !_mqtt.IsConnected)
+                    return;
                 var entities = HomeAssistantEntities.Build(templates, _options, _connectorId, Version);
                 _map.Set(entities);
                 foreach (var entity in entities)
@@ -212,7 +213,7 @@ namespace RIoT2.Connector.HomeAssistant.Services
             var report = Report.Create(message.Json);
             if (report?.Value == null || templates.FindReport(report.Id) == null)
                 return null;
-            return ($"{options.TopicPrefix}/{HomeAssistantEntities.Sanitize(report.Id)}/state", HomeAssistantEntities.StatePayload(report.Value));
+            return ($"{options.TopicPrefix}/{HomeAssistantEntities.ObjectId(report.Id)}/state", HomeAssistantEntities.StatePayload(report.Value));
         }
     }
 

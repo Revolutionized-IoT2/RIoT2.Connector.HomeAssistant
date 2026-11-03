@@ -13,7 +13,10 @@ The first release ([I47](https://github.com/Revolutionized-IoT2/.github/blob/mai
 - Home Assistant MQTT discovery for every report, variable and command template: binary sensors and
   sensors (unit and precision from the template, an entity's fields as attributes), switches (with the
   state of the matching report), numbers and texts, grouped by RIoT2 device.
-- Report and variable values as retained states; availability with a last will.
+- Report and variable values as retained states (a text array as its count, with the values as an
+  attribute); availability with a last will.
+- Ids that are unique per connector, and template ids with other characters made topic-safe with a
+  short hash, so ids that differ only in those characters stay apart.
 - Commands from Home Assistant through the orchestrator's `POST /api/v2/commands`, with
   `RIOT2_HA_COMMAND_TTL_SECONDS`.
 - Discovery messages republished when the templates change, when Home Assistant restarts and after a

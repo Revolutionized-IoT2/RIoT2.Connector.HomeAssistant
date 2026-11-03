@@ -46,7 +46,8 @@ CI (`ci.yml`) builds and validates the image; a tag `x.y.z` releases the image (
 - Commands go only through `IRiot2CommandClient` (the orchestrator's outbox); never publish
   `riot2/node/{id}/command`.
 - Keep discovery messages and states retained, and the topics under the configured prefixes. Unique ids
-  and object ids are `riot2_<template id>`: changing them duplicates entities in every Home Assistant.
+  and object ids are `riot2_<connector id>_<id>` (`HomeAssistantEntities.ObjectId`): changing them
+  duplicates entities in every Home Assistant.
 - Keep `HomeAssistantEntities` free of I/O; `HomeAssistantTests` in RIoT2.Tests pins its output.
 - Keep `PackageReference` items versionless; versions are in `Directory.Packages.props`.
 

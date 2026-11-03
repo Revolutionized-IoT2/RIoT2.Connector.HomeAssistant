@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Nodes;
 using RIoT2.Connector.Sdk;
@@ -23,12 +24,14 @@ namespace RIoT2.Connector.HomeAssistant.Services
     /// Maps the RIoT2 templates to Home Assistant MQTT discovery (design 7.3 phase 4):
     /// <list type="bullet">
     /// <item>a report or variable becomes a <c>binary_sensor</c> (boolean) or a <c>sensor</c> (number with the template's
-    /// <c>unit</c> and <c>precision</c>, text, entity with its fields as attributes, text array as JSON);</item>
+    /// <c>unit</c> and <c>precision</c>, text, entity with its fields as attributes, text array with its count as the state
+    /// and the values as the attribute <c>values</c>);</item>
     /// <item>a command becomes a <c>switch</c> (boolean; its state is the report of the same device and address, else
     /// optimistic), a <c>number</c> or a <c>text</c> (text, entity and text array as JSON).</item>
     /// </list>
     /// Entities are grouped by RIoT2 device; variables form the device "RIoT2 variables". Every entity uses the
-    /// connector's availability topic.
+    /// connector's availability topic. Unique ids, object ids and device identifiers include the connector's id, so two
+    /// connectors (with their own <c>RIOT2_HA_TOPIC_PREFIX</c>) can serve one Home Assistant.
     /// </summary>
     public static class HomeAssistantEntities
     {
@@ -39,14 +42,14 @@ namespace RIoT2.Connector.HomeAssistant.Services
         {
             ArgumentNullException.ThrowIfNull(templates);
             ArgumentNullException.ThrowIfNull(options);
-            var nodeId = "riot2_" + Sanitize(connectorId);
+            var nodeId = NodeId(connectorId);
             var entities = new List<HomeAssistantEntity>();
             var seen = new HashSet<string>(StringComparer.Ordinal);
 
             var reportStates = new Dictionary<(string Device, string Address), string>();
             foreach (var (template, isVariable) in templates.Reports.Select(r => (r, false)).Concat(templates.Variables.Select(v => (v, true))))
             {
-                var objectId = Sanitize(template.Id);
+                var objectId = ObjectId(template.Id);
                 if (!seen.Add(objectId))
                     continue;
                 var entity = Report(template, isVariable, objectId, nodeId, options, version);
@@ -56,7 +59,7 @@ namespace RIoT2.Connector.HomeAssistant.Services
             }
             foreach (var template in templates.Commands)
             {
-                var objectId = Sanitize(template.Id);
+                var objectId = ObjectId(template.Id);
                 if (!seen.Add(objectId))
                     continue;
                 reportStates.TryGetValue((template.DeviceId, template.Address ?? ""), out var stateTopic);
@@ -77,6 +80,19 @@ namespace RIoT2.Connector.HomeAssistant.Services
         public static string ConfigFilter(HomeAssistantOptions options, string connectorId) =>
             $"{options.DiscoveryPrefix}/+/{NodeId(connectorId)}/+/config";
 
+        /// <summary>
+        /// The id of a template in topics and Home Assistant ids: the template id itself when it only has letters, digits,
+        /// <c>_</c> and <c>-</c>, else the sanitized id and a short hash of the original, so <c>a.b</c> and <c>a_b</c> stay apart.
+        /// </summary>
+        public static string ObjectId(string templateId)
+        {
+            var sanitized = Sanitize(templateId);
+            if (sanitized == templateId)
+                return sanitized;
+            var hash = SHA256.HashData(Encoding.UTF8.GetBytes(templateId));
+            return sanitized + "_" + Convert.ToHexStringLower(hash, 0, 4);
+        }
+
         /// <summary>Letters, digits, <c>_</c> and <c>-</c>; anything else becomes <c>_</c>.</summary>
         public static string Sanitize(string value)
         {
@@ -90,7 +106,7 @@ namespace RIoT2.Connector.HomeAssistant.Services
         {
             var stateTopic = $"{options.TopicPrefix}/{objectId}/state";
             var component = template.Type == ValueType.Boolean ? "binary_sensor" : "sensor";
-            var config = Common(template, isVariable, objectId, options, version);
+            var config = Common(template, isVariable, objectId, nodeId, options, version);
             config["state_topic"] = stateTopic;
             switch (template.Type)
             {
@@ -111,6 +127,12 @@ namespace RIoT2.Connector.HomeAssistant.Services
                     config["value_template"] = "{{ now().isoformat() }}";
                     config["device_class"] = "timestamp";
                     break;
+                case ValueType.TextArray:
+                    // A state is at most 255 characters: the count is the state, the values the attribute "values".
+                    config["json_attributes_topic"] = stateTopic;
+                    config["value_template"] = "{{ value_json['values'] | count }}";
+                    config["state_class"] = "measurement";
+                    break;
             }
             return new HomeAssistantEntity(template.Id, false, template.Type, component, objectId, ConfigTopic(options, component, nodeId, objectId), config, stateTopic, null);
         }
@@ -118,7 +140,7 @@ namespace RIoT2.Connector.HomeAssistant.Services
         private static HomeAssistantEntity Command(ConnectorTemplate template, string objectId, string nodeId, HomeAssistantOptions options, string? version, string? reportState)
         {
             var commandTopic = $"{options.TopicPrefix}/{objectId}/set";
-            var config = Common(template, false, objectId, options, version);
+            var config = Common(template, false, objectId, nodeId, options, version);
             config["command_topic"] = commandTopic;
             string component;
             switch (template.Type)
@@ -153,12 +175,12 @@ namespace RIoT2.Connector.HomeAssistant.Services
             return new HomeAssistantEntity(template.Id, true, template.Type, component, objectId, ConfigTopic(options, component, nodeId, objectId), config, reportState, commandTopic);
         }
 
-        private static JsonObject Common(ConnectorTemplate template, bool isVariable, string objectId, HomeAssistantOptions options, string? version)
+        private static JsonObject Common(ConnectorTemplate template, bool isVariable, string objectId, string nodeId, HomeAssistantOptions options, string? version)
         {
             var deviceKey = isVariable ? "variables" : Sanitize(string.IsNullOrEmpty(template.DeviceId) ? template.Node + "_" + template.Device : template.DeviceId);
             var device = new JsonObject
             {
-                ["identifiers"] = new JsonArray("riot2_" + deviceKey),
+                ["identifiers"] = new JsonArray(nodeId + "_" + deviceKey),
                 ["name"] = isVariable ? "RIoT2 variables" : string.IsNullOrEmpty(template.Device) ? "RIoT2 device" : template.Device,
                 ["manufacturer"] = "RIoT2",
                 ["model"] = isVariable ? "Variables" : "RIoT2 device"
@@ -166,8 +188,8 @@ namespace RIoT2.Connector.HomeAssistant.Services
             var config = new JsonObject
             {
                 ["name"] = template.Name,
-                ["unique_id"] = "riot2_" + objectId,
-                ["object_id"] = "riot2_" + objectId,
+                ["unique_id"] = nodeId + "_" + objectId,
+                ["object_id"] = nodeId + "_" + objectId,
                 ["availability_topic"] = AvailabilityTopic(options),
                 ["device"] = device,
                 ["origin"] = new JsonObject
@@ -195,7 +217,7 @@ namespace RIoT2.Connector.HomeAssistant.Services
 
         /// <summary>
         /// The state a report's value is published as: <c>true</c>/<c>false</c>, an invariant number, the text (cut to
-        /// <see cref="MaxStateLength"/>), or the JSON of an entity or array.
+        /// <see cref="MaxStateLength"/>), the JSON of an entity, or <c>{"values":[…]}</c> for a text array.
         /// </summary>
         public static string StatePayload(ValueModel value)
         {
@@ -209,6 +231,8 @@ namespace RIoT2.Connector.HomeAssistant.Services
                 case ValueType.Text:
                     var text = value.GetValue<string>() ?? "";
                     return text.Length > MaxStateLength ? text[..MaxStateLength] : text;
+                case ValueType.TextArray:
+                    return "{\"values\":" + value.ToJson() + "}";
                 default:
                     return value.ToJson();
             }
